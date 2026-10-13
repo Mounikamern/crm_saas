@@ -1,0 +1,230 @@
+// Prisma schema for Cements, Tiles, and Granite Store CRM SaaS
+// Supports Brand-wise, Batch-wise stock tracking, FIFO batch allocation,
+// Flexible customer selling prices, Real-time batch profit calculations, and Invoicing.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model StoreSetting {
+  id            String   @id @default(cuid())
+  storeName     String   @default("Sri Lakshmi Building Materials & Tiles")
+  tagline       String?  @default("Wholesale & Retail Dealers in Cement, Tiles & Granites")
+  gstin         String?  @default("37AAACS1429B1Z8")
+  phone         String   @default("+91 98765 43210")
+  email         String?  @default("sales@lakshmibuildingmaterials.com")
+  address       String   @default("Plot 42, Main Industrial Bypass Road")
+  city          String   @default("Vijayawada")
+  state         String   @default("Andhra Pradesh")
+  pincode       String?  @default("520001")
+  bankName      String?  @default("State Bank of India")
+  accountNumber String?  @default("309485720194")
+  ifscCode      String?  @default("SBIN0001234")
+  upiId         String?  @default("lakshmistore@sbi")
+  invoicePrefix String   @default("INV-2026-")
+  invoiceTerms  String?  @default("1. Goods once sold will not be taken back.\n2. Interest @ 18% p.a. charged on overdue bills.\n3. Subject to local jurisdiction.")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  unit        String    // e.g. Bags, Boxes, Sq.Ft, Slabs
+  description String?
+  products    Product[]
+  createdAt   DateTime  @default(now())
+}
+
+model Brand {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  category    String?
+  products    Product[]
+  createdAt   DateTime  @default(now())
+}
+
+model Product {
+  id              String            @id @default(cuid())
+  name            String
+  sku             String?           @unique
+  hsnCode         String?           // e.g. 2523 (Cement), 6907 (Tiles), 6802 (Granite)
+  unit            String            // Bags, Boxes, Sq.Ft, Slabs
+  categoryId      String
+  category        Category          @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  brandId         String
+  brand           Brand             @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  defaultCostRate Float             @default(0)
+  defaultSellRate Float             @default(0)
+  minStockAlert   Int               @default(50)
+  batches         Batch[]
+  invoiceItems    SaleInvoiceItem[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([brandId])
+  @@index([categoryId])
+}
+
+model Supplier {
+  id             String         @id @default(cuid())
+  name           String
+  phone          String?
+  email          String?
+  address        String?
+  gstin          String?
+  purchases      PurchaseBill[]
+  createdAt      DateTime       @default(now())
+}
+
+model PurchaseBill {
+  id             String    @id @default(cuid())
+  billNumber     String
+  supplierId     String?
+  supplier       Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  supplierName   String?
+  purchaseDate   DateTime
+  totalAmount    Float
+  paidAmount     Float     @default(0)
+  paymentStatus  String    @default("PAID") // PAID, PARTIAL, CREDIT
+  notes          String?
+  batches        Batch[]
+  createdAt      DateTime  @default(now())
+}
+
+model Batch {
+  id                String            @id @default(cuid())
+  batchNumber       String            // e.g. BATCH-20261001-RAMCO-01
+  productId         String
+  product           Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  purchaseBillId    String?
+  purchaseBill      PurchaseBill?     @relation(fields: [purchaseBillId], references: [id], onDelete: SetNull)
+  purchaseDate      DateTime          // e.g. 2026-10-01 or 2026-10-10
+  purchaseRate      Float             // Cost price per unit (₹230, ₹250, etc.)
+  initialQuantity   Float             // Initial bags or units purchased
+  soldQuantity      Float             @default(0) // Units sold from this batch
+  availableQuantity Float             // initialQuantity - soldQuantity
+  status            String            @default("ACTIVE") // ACTIVE, DEPLETED
+  supplierName      String?
+  notes             String?
+  saleItems         SaleInvoiceItem[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([productId])
+  @@index([purchaseDate])
+  @@index([status])
+}
+
+model Customer {
+  id            String            @id @default(cuid())
+  name          String
+  phone         String?
+  email         String?
+  address       String?
+  city          String?
+  gstin         String?
+  customerType  String            @default("RETAIL") // CONTRACTOR, BUILDER, RETAIL, WHOLESALE
+  totalBilled   Float             @default(0)
+  totalPaid     Float             @default(0)
+  creditBalance Float             @default(0) // totalBilled - totalPaid
+  invoices      SaleInvoice[]
+  payments      CustomerPayment[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+model SaleInvoice {
+  id            String            @id @default(cuid())
+  invoiceNumber String            @unique // e.g. INV-2026-1001
+  invoiceDate   DateTime
+  customerId    String
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerName  String
+  subtotal      Float
+  discount      Float             @default(0)
+  taxRate       Float             @default(0)
+  taxAmount     Float             @default(0)
+  grandTotal    Float
+  paidAmount    Float             @default(0)
+  balanceDue    Float             @default(0)
+  paymentStatus String            @default("PAID") // PAID, PARTIALLY_PAID, CREDIT
+  paymentMethod String            @default("CASH") // CASH, UPI, BANK_TRANSFER, CHEQUE
+  totalCost     Float             @default(0) // Total purchase cost of items sold
+  totalProfit   Float             @default(0) // Total profit earned on this invoice
+  profitMargin  Float             @default(0) // (totalProfit / totalCost) * 100
+  notes         String?
+  items         SaleInvoiceItem[]
+  payments      CustomerPayment[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([customerId])
+  @@index([invoiceDate])
+}
+
+model SaleInvoiceItem {
+  id                String      @id @default(cuid())
+  invoiceId         String
+  invoice           SaleInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  batchId           String
+  batch             Batch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  productName       String
+  brandName         String
+  batchNumber       String
+  batchPurchaseDate DateTime
+  unit              String
+  quantity          Float
+  batchCostRate     Float       // Cost price from the batch (e.g. ₹230 or ₹250)
+  sellingRate       Float       // Custom selling price per bag for this customer (e.g. ₹280)
+  lineTotal         Float       // quantity * sellingRate
+  lineCost          Float       // quantity * batchCostRate
+  lineProfit        Float       // lineTotal - lineCost
+  createdAt         DateTime    @default(now())
+
+  @@index([invoiceId])
+  @@index([batchId])
+  @@index([productId])
+}
+
+model CustomerPayment {
+  id            String       @id @default(cuid())
+  customerId    String
+  customer      Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoiceId     String?
+  invoice       SaleInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  paymentDate   DateTime     @default(now())
+  amount        Float
+  paymentMethod String       // CASH, UPI, BANK_TRANSFER, CHEQUE
+  referenceNo   String?
+  notes         String?
+  createdAt     DateTime     @default(now())
+
+  @@index([customerId])
+}
+
+model DealerSubscription {
+  id                String   @id @default(cuid())
+  dealerMobile      String   @unique
+  dealerStoreName   String
+  ownerName         String
+  planId            String   // starter, pro, enterprise
+  planName          String   // Starter Dealer, Professional Dealer, Enterprise
+  billingCycle      String   // monthly, yearly
+  amount            Float
+  currency          String   @default("INR")
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  status            String   @default("ACTIVE") // ACTIVE, EXPIRED
+  startDate         DateTime @default(now())
+  endDate           DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
